@@ -16,3 +16,4 @@ PyYAML==6.0.3
 pydantic
 sap-ai-sdk-gen==6.10.0
 botocore
+mcp[cli]>=1.9.0,<2.0.0
