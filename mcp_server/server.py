@@ -1,10 +1,12 @@
 """
-BOM Cost Optimization — MCP Server
-Exposes the BOM agent as an MCP server so any MCP-compatible client
-(Joule Work Desktop Hub, Claude Desktop, Cursor, etc.) can use it.
+BOM Cost Optimization — MCP Server (Streamable HTTP transport)
+Exposes the BOM agent as an MCP server compatible with:
+  - Joule Work Desktop Hub
+  - Claude Desktop
+  - Cursor / any MCP client
 
-Calls the existing deployed agent at BOM_AGENT_URL — no SAP credentials
-needed here; those are handled by the main agent.
+Uses the newer MCP Streamable HTTP transport (single POST endpoint).
+Calls the existing deployed agent — no SAP credentials needed here.
 """
 from __future__ import annotations
 
@@ -12,10 +14,9 @@ import os
 import uuid
 import httpx
 from mcp.server.fastmcp import FastMCP
-from starlette.applications import Starlette
+from mcp.server.streamable_http_manager import TransportSecuritySettings
 from starlette.requests import Request
 from starlette.responses import JSONResponse
-from starlette.routing import Route, Mount
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 BOM_AGENT_URL = os.environ.get(
@@ -33,6 +34,9 @@ mcp = FastMCP(
         "and procurement data. Always pass the user's question as-is — the agent "
         "handles all entity extraction and SAP lookups internally."
     ),
+    # Disable DNS rebinding protection so CF-deployed server accepts requests
+    # from any host (Joule, Claude Desktop, external clients)
+    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
 )
 
 
@@ -74,25 +78,77 @@ async def ask_bom_agent(query: str) -> str:
         return f"Error connecting to BOM agent: {e}"
 
 
-# ── Health check endpoint ──────────────────────────────────────────────────────
-async def health(request: Request) -> JSONResponse:
-    return JSONResponse({"status": "ok", "service": "bom-mcp-server"})
+# ── Build the streamable HTTP app (MCP standard transport) ────────────────────
+# Routes: POST /mcp — MCP messages  (streamable HTTP transport)
+_http_app = mcp.streamable_http_app()
 
-
-# ── Combine MCP SSE app + health endpoint ─────────────────────────────────────
-_mcp_app = mcp.sse_app()
+# ── CORS headers helper ───────────────────────────────────────────────────────
+_CORS_HEADERS = [
+    (b"access-control-allow-origin",  b"*"),
+    (b"access-control-allow-methods", b"GET, POST, OPTIONS"),
+    (b"access-control-allow-headers", b"content-type, authorization, mcp-session-id"),
+]
 
 
 async def application(scope, receive, send):
-    """Root ASGI app: /health goes to health handler, everything else to MCP."""
-    if scope.get("type") == "http" and scope.get("path") == "/health":
-        req = Request(scope, receive)
-        resp = await health(req)
-        await resp(scope, receive, send)
-    else:
-        await _mcp_app(scope, receive, send)
+    """
+    Root ASGI dispatcher:
+      GET  /health  → health JSON
+      OPTIONS *     → CORS preflight
+      *             → MCP streamable HTTP handler (path rewritten to /mcp)
+    """
+    if scope["type"] == "lifespan":
+        await _http_app(scope, receive, send)
+        return
+
+    if scope["type"] != "http":
+        await _http_app(scope, receive, send)
+        return
+
+    path   = scope.get("path", "")
+    method = scope.get("method", "GET").upper()
+
+    # ── CORS preflight ────────────────────────────────────────────────────────
+    if method == "OPTIONS":
+        await send({
+            "type": "http.response.start",
+            "status": 204,
+            "headers": _CORS_HEADERS + [(b"content-length", b"0")],
+        })
+        await send({"type": "http.response.body", "body": b""})
+        return
+
+    # ── Health check ──────────────────────────────────────────────────────────
+    if path == "/health":
+        body = b'{"status":"ok","service":"bom-mcp-server","transport":"streamable-http"}'
+        await send({
+            "type": "http.response.start",
+            "status": 200,
+            "headers": [
+                (b"content-type",   b"application/json"),
+                (b"content-length", str(len(body)).encode()),
+            ] + _CORS_HEADERS,
+        })
+        await send({"type": "http.response.body", "body": body})
+        return
+
+    # ── MCP endpoint — rewrite any path to /mcp for the handler ──────────────
+    new_scope = dict(scope)
+    new_scope["path"]     = "/mcp"
+    new_scope["raw_path"] = b"/mcp"
+
+    # Wrap send to inject CORS headers on every MCP response
+    async def cors_send(message):
+        if message["type"] == "http.response.start":
+            headers = list(message.get("headers", []))
+            headers.extend(_CORS_HEADERS)
+            message = {**message, "headers": headers}
+        await send(message)
+
+    await _http_app(new_scope, receive, cors_send)
 
 
 if __name__ == "__main__":
+    import uvicorn
     port = int(os.environ.get("PORT", 8080))
-    mcp.run(transport="sse", host="0.0.0.0", port=port)
+    uvicorn.run(application, host="0.0.0.0", port=port)
