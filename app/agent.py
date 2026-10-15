@@ -844,11 +844,16 @@ class SampleAgent:
                 return
 
             # ── STEP 6b: SAP auth pre-flight check ───────────────────────────
-            # If this query needs SAP tools but no user session token is active,
-            # prompt login immediately instead of failing inside the LLM pipeline.
+            # Skip the prompt if a per-request auth is already set (user login
+            # or DEFAULT_SAP_USERNAME service-account fallback), or if a default
+            # service account is configured for credential-free callers (MCP/API).
             if objective_result.get("requires_sap_tools", True):
+                import os as _os
                 from s4hana_client import _request_basic_auth
-                has_user_auth = bool(_request_basic_auth.get())
+                has_user_auth = (
+                    bool(_request_basic_auth.get())
+                    or bool(_os.environ.get("DEFAULT_SAP_USERNAME"))
+                )
                 if not has_user_auth:
                     yield {
                         "is_task_complete": True,
