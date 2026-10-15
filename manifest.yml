@@ -33,6 +33,8 @@ applications:
     health-check-http-endpoint: /health
     env:
       BOM_AGENT_URL: "https://bom-cost-optimization-agent.cfapps.us10.hana.ondemand.com"
+      SAP_USERNAME: "REPLACE_VIA_CF_SET_ENV"
+      SAP_PASSWORD: "REPLACE_VIA_CF_SET_ENV"
       LOG_LEVEL: INFO
       PYTHONUNBUFFERED: "1"
       PIP_REQUIREMENTS: mcp_server/requirements.txt

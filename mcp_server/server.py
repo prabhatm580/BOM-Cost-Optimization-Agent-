@@ -5,24 +5,62 @@ Exposes the BOM agent as an MCP server compatible with:
   - Claude Desktop
   - Cursor / any MCP client
 
-Uses the newer MCP Streamable HTTP transport (single POST endpoint).
-Calls the existing deployed agent — no SAP credentials needed here.
+Auto-authenticates with SAP CIN_100 using SAP_USERNAME / SAP_PASSWORD env vars.
+All callers share one service-account session — no per-user login needed.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
 import httpx
 from mcp.server.fastmcp import FastMCP
 from mcp.server.streamable_http_manager import TransportSecuritySettings
-from starlette.requests import Request
-from starlette.responses import JSONResponse
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 BOM_AGENT_URL = os.environ.get(
     "BOM_AGENT_URL",
     "https://bom-cost-optimization-agent.cfapps.us10.hana.ondemand.com",
 ).rstrip("/")
+
+SAP_USERNAME = os.environ.get("SAP_USERNAME", "")
+SAP_PASSWORD = os.environ.get("SAP_PASSWORD", "")
+
+# ── Session token cache (service-account auto-login) ──────────────────────────
+_cached_token: str | None = None
+_token_lock = asyncio.Lock()
+
+
+async def _get_auth_token() -> str | None:
+    """
+    Returns a cached SAP auth token, refreshing it if needed.
+    Uses SAP_USERNAME / SAP_PASSWORD env vars for service-account login.
+    Returns None if no credentials are configured.
+    """
+    global _cached_token
+
+    if not SAP_USERNAME or not SAP_PASSWORD:
+        return None
+
+    async with _token_lock:
+        if _cached_token:
+            return _cached_token
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(
+                    f"{BOM_AGENT_URL}/api/login",
+                    json={"username": SAP_USERNAME, "password": SAP_PASSWORD},
+                    headers={"Content-Type": "application/json"},
+                )
+                if resp.status_code == 200:
+                    _cached_token = resp.json().get("token")
+                    return _cached_token
+        except Exception:
+            pass
+
+    return None
+
 
 # ── MCP Server ─────────────────────────────────────────────────────────────────
 mcp = FastMCP(
@@ -34,8 +72,6 @@ mcp = FastMCP(
         "and procurement data. Always pass the user's question as-is — the agent "
         "handles all entity extraction and SAP lookups internally."
     ),
-    # Disable DNS rebinding protection so CF-deployed server accepts requests
-    # from any host (Joule, Claude Desktop, external clients)
     transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
 )
 
@@ -60,13 +96,33 @@ async def ask_bom_agent(query: str) -> str:
         Answer from the live SAP S/4HANA system.
     """
     session_id = f"mcp-{uuid.uuid4().hex[:8]}"
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+
+    # Auto-login with service account credentials if available
+    token = await _get_auth_token()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
     try:
         async with httpx.AsyncClient(timeout=90.0) as client:
             response = await client.post(
                 f"{BOM_AGENT_URL}/api/chat",
                 json={"message": query, "contextId": session_id},
-                headers={"Content-Type": "application/json"},
+                headers=headers,
             )
+            # If token expired, clear cache and retry once
+            if response.status_code == 401 and token:
+                global _cached_token
+                _cached_token = None
+                new_token = await _get_auth_token()
+                if new_token:
+                    headers["Authorization"] = f"Bearer {new_token}"
+                    response = await client.post(
+                        f"{BOM_AGENT_URL}/api/chat",
+                        json={"message": query, "contextId": session_id},
+                        headers=headers,
+                    )
+
             response.raise_for_status()
             data = response.json()
             return data.get("reply") or data.get("content") or data.get("message") or str(data)
@@ -79,10 +135,8 @@ async def ask_bom_agent(query: str) -> str:
 
 
 # ── Build the streamable HTTP app (MCP standard transport) ────────────────────
-# Routes: POST /mcp — MCP messages  (streamable HTTP transport)
 _http_app = mcp.streamable_http_app()
 
-# ── CORS headers helper ───────────────────────────────────────────────────────
 _CORS_HEADERS = [
     (b"access-control-allow-origin",  b"*"),
     (b"access-control-allow-methods", b"GET, POST, OPTIONS"),
@@ -91,12 +145,6 @@ _CORS_HEADERS = [
 
 
 async def application(scope, receive, send):
-    """
-    Root ASGI dispatcher:
-      GET  /health  → health JSON
-      OPTIONS *     → CORS preflight
-      *             → MCP streamable HTTP handler (path rewritten to /mcp)
-    """
     if scope["type"] == "lifespan":
         await _http_app(scope, receive, send)
         return
@@ -108,36 +156,31 @@ async def application(scope, receive, send):
     path   = scope.get("path", "")
     method = scope.get("method", "GET").upper()
 
-    # ── CORS preflight ────────────────────────────────────────────────────────
+    # CORS preflight
     if method == "OPTIONS":
-        await send({
-            "type": "http.response.start",
-            "status": 204,
-            "headers": _CORS_HEADERS + [(b"content-length", b"0")],
-        })
+        await send({"type": "http.response.start", "status": 204,
+                    "headers": _CORS_HEADERS + [(b"content-length", b"0")]})
         await send({"type": "http.response.body", "body": b""})
         return
 
-    # ── Health check ──────────────────────────────────────────────────────────
+    # Health check
     if path == "/health":
-        body = b'{"status":"ok","service":"bom-mcp-server","transport":"streamable-http"}'
-        await send({
-            "type": "http.response.start",
-            "status": 200,
-            "headers": [
-                (b"content-type",   b"application/json"),
-                (b"content-length", str(len(body)).encode()),
-            ] + _CORS_HEADERS,
-        })
+        sap_auth = "configured" if SAP_USERNAME else "not_configured"
+        body = (
+            f'{{"status":"ok","service":"bom-mcp-server",'
+            f'"transport":"streamable-http","sap_auth":"{sap_auth}"}}'
+        ).encode()
+        await send({"type": "http.response.start", "status": 200,
+                    "headers": [(b"content-type", b"application/json"),
+                                (b"content-length", str(len(body)).encode())] + _CORS_HEADERS})
         await send({"type": "http.response.body", "body": body})
         return
 
-    # ── MCP endpoint — rewrite any path to /mcp for the handler ──────────────
+    # Route everything to MCP handler (rewrite path to /mcp)
     new_scope = dict(scope)
     new_scope["path"]     = "/mcp"
     new_scope["raw_path"] = b"/mcp"
 
-    # Wrap send to inject CORS headers on every MCP response
     async def cors_send(message):
         if message["type"] == "http.response.start":
             headers = list(message.get("headers", []))
