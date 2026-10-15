@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0",
+  "agent": "bom-cost-optimization-agent",
+  "migration_mode": "dual-mode",
+  "timestamp": "2026-07-04T19:58:22Z",
+  "phases_complete": ["phase0", "phase2", "phase2.5", "phase3", "phase4", "phase5"],
+  "status": "deploy_script_generated_awaiting_local_execution",
+  "deploy_note": "CF API unreachable from sandbox (private network). Use deploy-cf.sh from local machine.",
+  "cf": {
+    "api_endpoint": "redacted",
+    "manifest": "manifest.yml",
+    "runtime": "python-3.12.x",
+    "start_command": "gunicorn --worker-class uvicorn.workers.UvicornWorker --workers 2 --bind 0.0.0.0:${PORT} --chdir app main:application",
+    "services": ["proj-vector-destination-service", "proj-vector-connectivity-service"],
+    "health_check": "/.well-known/agent.json"
+  },
+  "s4hana": {
+    "system_id": "s4hana_onprem",
+    "destination": "S4HANA",
+    "proxy_type": "OnPremise",
+    "odata_version": "v2"
+  },
+  "aicore": {
+    "destination": "aicore",
+    "model": "gpt-4o"
+  },
+  "dual_mode": {
+    "joule_gate": "JOULE_RUNTIME=1",
+    "cf_gate": "JOULE_RUNTIME=0 (default)",
+    "joule_files_on_disk": ["app/mcp_tools.py"],
+    "cfignore_excludes_joule": true
+  },
+  "tests": {
+    "total": 25,
+    "passed": 25,
+    "failed": 0
+  },
+  "files_created": [
+    "app/s4hana_client.py",
+    "app/aicore.py",
+    "manifest.yml",
+    "Procfile",
+    "runtime.txt",
+    ".cfignore",
+    "requirements-joule.txt"
+  ],
+  "files_modified": [
+    "app/agent.py",
+    "app/agent_executor.py",
+    "app/main.py",
+    "requirements.txt"
+  ]
+}

@@ -1,0 +1,83 @@
+{
+  "schema_version": 2,
+  "agent_dir": "assets/bom-cost-optimization-agent",
+  "state": {
+    "selected_systems": [
+      {
+        "candidate_id": "s4hana_onprem",
+        "destination_name": "S4HANA",
+        "proxy_type": "OnPremise",
+        "auth": "BasicAuthentication",
+        "response_envelope": "odata_v2",
+        "csrf_required": true
+      }
+    ],
+    "aicore_destination_name": "aicore",
+    "llm_model_name": "gpt-4o",
+    "runtime_mode": "dual-mode",
+    "client_strategy": "per-system",
+    "file_disposition": {
+      "app/s4hana_client.py": "edited",
+      "app/tools.py": "edited",
+      "app/agent.py": "edited",
+      "app/agent_executor.py": "edited",
+      "app/aicore.py": "edited",
+      "app/main.py": "edited",
+      "requirements.txt": "edited",
+      "requirements-joule.txt": "created",
+      "manifest.yml": "edited",
+      ".cfignore": "edited",
+      "Procfile": "created",
+      "runtime.txt": "created",
+      "tests/test_s4hana_client.py": "created",
+      "asset.yaml": "kept-cfignored",
+      "solution.yaml": "kept-cfignored",
+      "app/mcp_tools.py": "kept-gated"
+    },
+    "deployment": null
+  },
+  "audit_trail": [
+    {
+      "ts": "2026-07-04T00:00:00Z",
+      "phase": "0.1",
+      "kind": "autonomous_decision",
+      "value": "agent_dir = assets/bom-cost-optimization-agent (single candidate, no prompt)"
+    },
+    {
+      "ts": "2026-07-04T00:01:00Z",
+      "phase": "2.2",
+      "kind": "user_answer",
+      "value": "selected systems: s4hana_onprem (destination=S4HANA, OnPremise); aicore=aicore; model=gpt-4o"
+    },
+    {
+      "ts": "2026-07-04T00:02:00Z",
+      "phase": "2.3",
+      "kind": "autonomous_decision",
+      "value": "client_strategy = per-system (single system)"
+    },
+    {
+      "ts": "2026-07-04T00:03:00Z",
+      "phase": "3.5",
+      "kind": "autonomous_decision",
+      "value": "runtime_mode = dual-mode (default, not prompted)"
+    },
+    {
+      "ts": "2026-07-04T00:04:00Z",
+      "phase": "4.4",
+      "kind": "file_op",
+      "value": "requirements: split=true; sap-ai-sdk-gen=6.6.0; gunicorn~=22.0; uvicorn[standard]~=0.30"
+    },
+    {
+      "ts": "2026-07-07T11:34:00Z",
+      "phase": "4.7",
+      "kind": "file_op",
+      "value": "joule artefacts: kept. asset.yaml=kept-cfignored, solution.yaml=kept-cfignored. app/mcp_tools.py=kept-gated"
+    },
+    {
+      "ts": "2026-07-07T11:43:00Z",
+      "phase": "5.5",
+      "kind": "autonomous_decision",
+      "value": "tests passed: 42 / 0 failures (test_s4hana_client + test_tools, IBD_TESTING=1)"
+    }
+  ]
+}

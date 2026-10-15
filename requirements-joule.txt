@@ -1,0 +1,9 @@
+# Joule Studio runtime dependencies (not needed for CF deployment)
+litellm==1.86.1
+langchain==1.3.9
+langchain-core==1.4.7
+langchain-litellm==0.3.5
+click==8.1.8
+sap-cloud-sdk @ file:vendor/sap_cloud_sdk-0.29.1-py3-none-any.whl
+google-re2 @ file:vendor/google_re2-1.1.20240702-1-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl; sys_platform == "linux" and python_version <= "3.12"
+mcp>=1.0.0

@@ -1,0 +1,23 @@
+---
+applications:
+  - name: bom-cost-optimization-agent
+    memory: 512M
+    disk_quota: 1G
+    instances: 1
+    buildpacks:
+      - python_buildpack
+    command: gunicorn --worker-class uvicorn.workers.UvicornWorker --workers 1 --bind 0.0.0.0:${PORT} --chdir app main:application
+    health-check-type: http
+    health-check-http-endpoint: /.well-known/agent.json
+    env:
+      JOULE_RUNTIME: "0"
+      S4HANA_DESTINATION_NAME: CIN_100
+      DESTINATION_NAME: CIN_100
+      AICORE_DESTINATION_NAME: aicore
+      AICORE_MODEL: gpt-4o
+      LOG_LEVEL: INFO
+      PYTHONUNBUFFERED: "1"
+      PYTHONPATH: /home/vcap/app/app
+    services:
+      - proj-vector-destination-service
+      - proj-vector-connectivity-service
