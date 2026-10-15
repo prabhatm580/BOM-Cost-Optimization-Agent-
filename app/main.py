@@ -113,11 +113,9 @@ class JWTContextMiddleware(BaseHTTPMiddleware):
         set_user_token(tok or None)
         if tok:
             creds = resolve_token(tok)
-            if creds:
+            if creds and creds.get("username"):
                 set_request_auth(creds["username"], creds["password"])
         elif _DEFAULT_SAP_USER and _DEFAULT_SAP_PASS:
-            # No user token — fall back to the service-account credentials so
-            # MCP / API callers (who have no SAP login) still get live data.
             set_request_auth(_DEFAULT_SAP_USER, _DEFAULT_SAP_PASS)
         try:
             return await call_next(request)
@@ -131,20 +129,20 @@ class JWTContextMiddleware(BaseHTTPMiddleware):
 # ═══════════════════════════════════════════════════════════════════════════════
 async def api_auto_login(request: Request) -> JSONResponse:
     """
-    POST /api/auto-login
-    Returns a session token using DEFAULT_SAP_USERNAME / DEFAULT_SAP_PASSWORD
-    without requiring the user to enter credentials.
-    Returns 404 if no default credentials are configured.
+    POST /api/auto-login  — always returns a session token, no credentials needed.
+    If DEFAULT_SAP_USERNAME is configured, stores real SAP creds behind the token.
+    Otherwise the token is a pass-through and SAP auth is handled by the BTP destination.
     """
-    user = _DEFAULT_SAP_USER
-    pwd  = _DEFAULT_SAP_PASS
-    if not user or not pwd:
-        return JSONResponse({"error": "No default credentials configured."}, status_code=404)
-
     token = str(uuid.uuid4())
-    store_token(token, user, pwd)
-    logger.info("[auto-login] issued service-account token for user=%s", user)
-    return JSONResponse({"token": token, "username": user, "language": "EN", "system": "CIN_100"})
+    if _DEFAULT_SAP_USER and _DEFAULT_SAP_PASS:
+        store_token(token, _DEFAULT_SAP_USER, _DEFAULT_SAP_PASS)
+    logger.info("[auto-login] issued token (default_user=%s)", bool(_DEFAULT_SAP_USER))
+    return JSONResponse({
+        "token": token,
+        "username": _DEFAULT_SAP_USER or "system",
+        "language": "EN",
+        "system": "CIN_100",
+    })
 
 
 async def api_login(request: Request) -> JSONResponse:
@@ -1850,9 +1848,8 @@ def build_app():  # noqa: C901
         with open(full, "rb") as f:
             data = f.read()
 
-        # Inject auto-login bootstrap into index.html so the UI never shows the
-        # login screen when DEFAULT_SAP_USERNAME is configured.
-        if full.endswith("index.html") and _DEFAULT_SAP_USER:
+        # Always inject auto-login into index.html — login screen never appears.
+        if full.endswith("index.html"):
             auto_login_script = b"""<script>
 (async function(){
   try{

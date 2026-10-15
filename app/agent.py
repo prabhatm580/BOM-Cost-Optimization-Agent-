@@ -843,29 +843,6 @@ class SampleAgent:
                        "content": f"⚠️ {plan.error}"}
                 return
 
-            # ── STEP 6b: SAP auth pre-flight check ───────────────────────────
-            # Skip the prompt if a per-request auth is already set (user login
-            # or DEFAULT_SAP_USERNAME service-account fallback), or if a default
-            # service account is configured for credential-free callers (MCP/API).
-            if objective_result.get("requires_sap_tools", True):
-                import os as _os
-                from s4hana_client import _request_basic_auth
-                has_user_auth = (
-                    bool(_request_basic_auth.get())
-                    or bool(_os.environ.get("DEFAULT_SAP_USERNAME"))
-                )
-                if not has_user_auth:
-                    yield {
-                        "is_task_complete": True,
-                        "require_user_input": False,
-                        "content": (
-                            "🔐 **Please log in first.**\n\n"
-                            "BOMA needs your SAP CIN_100 credentials to fetch live data.\n"
-                            "Use the login button (top right) and enter your CIN_100 username and password."
-                        ),
-                    }
-                    return
-
             # ── STEP 7: Get LLM ───────────────────────────────────────────────
             llm = await self._get_llm()
             if llm is None:
@@ -1028,7 +1005,7 @@ class SampleAgent:
             if any(k in err_str for k in ['notfound', '404', 'deployment', 'model']):
                 msg = "⚠️ The AI engine is temporarily unavailable. Please try again in a moment."
             elif any(k in err_str for k in ['401', 'unauthorized', 'anmeldung', 'login', 'credential']):
-                msg = "🔐 Your SAP session has expired. Please log in again using the login screen."
+                msg = "⚠️ SAP CIN_100 authentication failed. Please contact your administrator."
             elif any(k in err_str for k in ['timeout', 'timed out', 'connection']):
                 msg = "⏱️ SAP CIN_100 is taking too long to respond. Please try again."
             else:
