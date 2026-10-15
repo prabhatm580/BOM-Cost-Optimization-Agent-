@@ -102,16 +102,23 @@ def get_executor() -> AgentExecutor:
 
 
 # ── Middleware ────────────────────────────────────────────────────────────────
+_DEFAULT_SAP_USER = os.environ.get("DEFAULT_SAP_USERNAME", "")
+_DEFAULT_SAP_PASS = os.environ.get("DEFAULT_SAP_PASSWORD", "")
+
+
 class JWTContextMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         auth = request.headers.get("authorization", "")
         tok = auth[7:].strip() if auth.lower().startswith("bearer ") else None
         set_user_token(tok or None)
-        # Forward user's SAP credentials to every API call
         if tok:
             creds = resolve_token(tok)
             if creds:
                 set_request_auth(creds["username"], creds["password"])
+        elif _DEFAULT_SAP_USER and _DEFAULT_SAP_PASS:
+            # No user token — fall back to the service-account credentials so
+            # MCP / API callers (who have no SAP login) still get live data.
+            set_request_auth(_DEFAULT_SAP_USER, _DEFAULT_SAP_PASS)
         try:
             return await call_next(request)
         finally:
