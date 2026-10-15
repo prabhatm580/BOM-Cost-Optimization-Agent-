@@ -129,6 +129,24 @@ class JWTContextMiddleware(BaseHTTPMiddleware):
 # ═══════════════════════════════════════════════════════════════════════════════
 #  /api/analyse  — fetch real S/4HANA data for materials × plants
 # ═══════════════════════════════════════════════════════════════════════════════
+async def api_auto_login(request: Request) -> JSONResponse:
+    """
+    POST /api/auto-login
+    Returns a session token using DEFAULT_SAP_USERNAME / DEFAULT_SAP_PASSWORD
+    without requiring the user to enter credentials.
+    Returns 404 if no default credentials are configured.
+    """
+    user = _DEFAULT_SAP_USER
+    pwd  = _DEFAULT_SAP_PASS
+    if not user or not pwd:
+        return JSONResponse({"error": "No default credentials configured."}, status_code=404)
+
+    token = str(uuid.uuid4())
+    store_token(token, user, pwd)
+    logger.info("[auto-login] issued service-account token for user=%s", user)
+    return JSONResponse({"token": token, "username": user, "language": "EN", "system": "CIN_100"})
+
+
 async def api_login(request: Request) -> JSONResponse:
     """
     POST /api/login
@@ -1831,6 +1849,22 @@ def build_app():  # noqa: C901
         mime = (mime or "application/octet-stream").encode()
         with open(full, "rb") as f:
             data = f.read()
+
+        # Inject auto-login bootstrap into index.html so the UI never shows the
+        # login screen when DEFAULT_SAP_USERNAME is configured.
+        if full.endswith("index.html") and _DEFAULT_SAP_USER:
+            auto_login_script = b"""<script>
+(async function(){
+  try{
+    if(!sessionStorage.getItem('sap_session')){
+      var r=await fetch('/api/auto-login',{method:'POST',headers:{'Content-Type':'application/json'}});
+      if(r.ok){var d=await r.json();if(d.token){sessionStorage.setItem('sap_session',JSON.stringify({token:d.token,username:d.username,language:'EN',system:'CIN_100'}));}}
+    }
+  }catch(e){}
+})();
+</script>"""
+            data = data.replace(b"<head>", b"<head>" + auto_login_script, 1)
+
         await send({"type":"http.response.start","status":200,"headers":[
             [b"content-type", mime],
             [b"content-length", str(len(data)).encode()],
@@ -1889,6 +1923,8 @@ def build_app():  # noqa: C901
         elif path == "/api/analyse":
             # Handles ALL /api/analyse requests — both searchOnly and full analysis
             await _handle_api(api_material_analyse, scope, receive, add_cors)
+        elif path == "/api/auto-login":
+            await _handle_api(api_auto_login, scope, receive, add_cors)
         elif path == "/api/login":
             await _handle_api(api_login, scope, receive, add_cors)
         elif path == "/api/validate-credentials":
